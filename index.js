@@ -4,10 +4,13 @@ require('babel-polyfill');
 var brandedQRCode = require('branded-qr-code');
 var AdmZip = require('adm-zip');
 var bodyParser = require('body-parser');
-const dataKEY = process.env['DETA_KEY']
+const dataKEY = "b0z61Ay7aZUy_EB8xyjVZ4BZMJvq7itEVKNHjWaPqK3jq"
 const app = express();
 const deta = Deta(dataKEY);
+const PARADISE_KEY = "PARADISE-3214_"
+const LANTERN_KEY = "PARADISE-3214_"
 const db = deta.Base('points2');
+const children = deta.Base('children');
 const users = deta.Base('users');
 const fs = require('fs');
 const cors = require('cors') 
@@ -59,7 +62,20 @@ async function pullAllUsers() {
     console.log("all data is", allItems)
     return allItems;
 }
+async function pullAllChildren() {
 
+    let res = await children.fetch();
+    let allItems = res.items;
+
+    // Continue fetching until "res.last" is undefined.
+    while (res.last) {
+      res = await children.fetch({}, { last: res.last });
+      allItems = allItems.concat(res.items);
+    }
+
+    console.log("all children is", allItems)
+    return allItems;
+}
 async function findKey(obj) {
     console.log("starting search")
     const allData = await pullAllUsers();
@@ -72,6 +88,99 @@ async function findKey(obj) {
     return user.key;
 }
 // Endpoint to store data in the database
+app.post("/create-little-lantern", async(req, res) => {
+    let data = req.body;
+  if (data.gender === undefined || data.age === undefined || data.fullname === undefined || data.grade === undefined || data.pottyTrained === undefined || data.primaryGuardianNumber === undefined  ) {
+      return res.status(400).json({ error: 'Invalid data format' });
+  }
+    const userKey = data.fullname;
+    //check if key already exists in database
+    let check = await children.get(userKey);
+    if (check !== null && data.update === undefined) {
+        return res.status(400).json({ error: 'Child already exists', status: 'failed'});
+    }
+  if (!(data.update === undefined)) {
+    //updating mode
+    delete data.update;
+    
+  }
+    data = {...data, isChecked: false};
+    await children.put(data, userKey);
+    res.status(200).json({ message: 'Child created successfully', userKey, status: 'success'});
+})
+app.post("/get-children-for-user", async(req, res) => {
+  let data = req.body;
+  if (data.email === undefined) {
+      return res.status(400).json({ error: 'Invalid data format' });
+  }
+  const userKey = data.email;
+  //check if key already exists in database
+  let check = await pullAllChildren();
+  let userChildren = check.filter(child => child.parentName === userKey);
+  if (userChildren === null || userChildren.length === 0) {
+      return res.status(400).json({ error: 'User does not have any children', status: 'failed'});
+  }
+  res.status(200).json({ message: 'Children found successfully', userChildren, status: 'success'});
+
+}
+)
+app.post("/check-in-child", async(req, res) => {
+    let data = req.body;
+    if (data.fullname === undefined) {
+        return res.status(400).json({ error: 'Invalid data format' });
+    }
+    const userKey = data.fullname;
+    //check if key already exists in database
+    let check = await children.get(userKey);
+    if (check === null) {
+        return res.status(400).json({ error: 'Child does not exist', status: 'failed'});
+    }
+    check.isChecked = true;
+    await children.put(check, userKey);
+    res.status(200).json({ message: 'Child checked in successfully', userKey, status: 'success'});
+})
+
+app.post("/check-out-child", async(req, res) => {
+    let data = req.body;
+    if (data.fullname === undefined) {
+        return res.status(400).json({ error: 'Invalid data format' });
+    }
+    const userKey = data.fullname;
+    //check if key already exists in database
+    let check = await children.get(userKey);
+    if (check === null) {
+        return res.status(400).json({ error: 'Child does not exist', status: 'failed'});
+    }
+ if (check.isChecked != true) {
+    return res.status(400).json({ error: 'Child is not checked in', status: 'failed'});
+    
+  }
+
+    check.isChecked = false;
+    await children.put(check, userKey);
+    res.status(200).json({ message: 'Child checked out successfully', userKey, status: 'success'});
+})
+
+
+app.post("/get-checked-in-children", async(req, res) => {
+    let data = req.body;
+    if (data.email === undefined) {
+        return res.status(400).json({ error: 'Invalid data format' });
+    }
+    if (data.role !== "admin") {
+        return res.status(400).json({ error: 'Invalid data format' });
+        }
+
+    //check if key already exists in database
+    let check = await pullAllChildren();
+    let userChildren = check.filter(child => child.isChecked === true);
+    if (userChildren === null || userChildren.length === 0) {
+        return res.status(400).json({ error: 'No Children are checked in', status: 'failed'});
+    }
+    res.status(200).json({ message: 'Children found successfully', userChildren, status: 'success'});
+
+    })
+
 app.post('/store-db-data', async (req, res) => {
     try {
         const key = Object.keys(req.body)[0];
@@ -95,7 +204,7 @@ app.post('/create-qr', async(req, res) => {
     const strings  = req.body.namesArray;
     var zip = new AdmZip();
     if (!Array.isArray(strings) || strings === undefined || strings?.length === 0) {
-      res.status(400).json({ error: 'Invalid data format' });
+      return res.status(400).json({ error: 'Invalid data format' });
     }
 
 async function createCodes() {
@@ -145,7 +254,11 @@ async function createCodes() {
   res.setHeader('Content-type', 'application/zip');
   zip.toBufferPromise().then((buffer) => {
       res.send(buffer);
-
+//delete files in output folder
+    const files = fs.readdirSync('./output');
+    files.forEach((file) => {
+        fs.unlinkSync(`./output/${file}`);
+    });
   })
   /** 
   //log when writing zip finishes
@@ -240,7 +353,45 @@ app.get('/get-leaderboard', async (req, res) => {
         res.status(500).json({ error: 'Failed to get leaderboard data from the database' });
     }
 });
+app.post('/create-single-lantern-qr', async(req, res) => {
+  console.log(req.body)
 
+                if (req.body.name === undefined || req.body.name === null || req.body.name === '') {
+                   return res.status(400).json({ error: 'Invalid data format' });
+                }
+                const str = req.body.name;
+
+                const buf = await brandedQRCode.generate({
+                  text: `Lantern-3214_${str}`,
+                  path: __dirname + '/splash.png',
+                  ratio: 1.6,
+                  opt: { errorCorrectionLevel:  'H', margin: 2, width: 1600},
+                });
+
+                const image = await loadImage(buf);
+
+                const canvas = createCanvas(image.width, image.height + 200);
+                const context = canvas.getContext('2d');
+
+                context.drawImage(image, 0, 0, image.width, image.height);
+
+                context.fillStyle = 'black';
+                context.fillRect(0, image.height, canvas.width, 200);
+
+                context.fillStyle = 'white';
+                context.textAlign = 'center';
+                context.font = '90px "Arial"';
+                context.fillText(str, canvas.width / 2, image.height + 130);
+
+  const stream = canvas.createPNGStream(); // Create PNG stream from canvas
+
+  res.setHeader('Content-Type', 'image/png'); // Set response header to indicate PNG content
+  stream.pipe(res); // Pipe the PNG stream to the response object
+
+
+
+
+})
 app.post('/create-single-qr', async(req, res) => {
   console.log(req.body)
 
@@ -289,6 +440,7 @@ app.post('/create-user', async (req, res) => {
         if (data.fullname === undefined || data.email === undefined || data.password === undefined) {
           return  res.status(400).json({ error: 'Invalid data format', status: 'failed'});
         }
+        data.email = data.email.toLowerCase()
         data = {...data, role: 'user', paradiseAccess: false};
         const userKey = data.email;
         //check if key already exists in database
@@ -345,7 +497,19 @@ app.post('/get-user-key', async (req, res) => {
         res.status(500).json({ error: 'Failed to get data from the database', status: 'failed'});
     }
 })
+app.post('/get-paradise-key', async (req, res) => {
+    try {
 
+        res.status(200).json(PARADISE_KEY);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Failed to get paradise key' });
+    }
+});
+
+app.get('/', function(req, res){
+res.sendFile(__dirname + '/index.html');
+});
 app.post('/login', async (req, res) => {
     try {
         if (typeof req.body !== 'object') {
@@ -355,12 +519,15 @@ app.post('/login', async (req, res) => {
         if (data.email === undefined || data.password === undefined) {
           return  res.status(400).json({ error: 'Invalid data format', status: 'failed'});
         }
-        const userData = await users.get(data.email);
+        const userData = await users.get(data.email.toLowerCase());
 
 
         if (userData === undefined || userData === null) {
             return res.status(404).json({ error: 'User not found', status: 'failed'});
         }
+      if (!(userData.password === data.password)) {
+        return res.status(404).json({ error: 'User not found', status: 'failed'});
+      }
         res.status(200).json({ message: 'User logged in successfully', userData: userData, status: 'success'});
     } catch (error) {
         console.error(error);
