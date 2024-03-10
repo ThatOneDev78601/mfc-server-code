@@ -4,7 +4,7 @@ require('babel-polyfill');
 var brandedQRCode = require('branded-qr-code');
 var AdmZip = require('adm-zip');
 var bodyParser = require('body-parser');
-const dataKEY = "b0z61Ay7aZUy_EB8xyjVZ4BZMJvq7itEVKNHjWaPqK3jq"
+const dataKEY = "DETA_KEY_HERE"
 const app = express();
 const deta = Deta(dataKEY);
 const PARADISE_KEY = "PARADISE-3214_"
@@ -20,7 +20,23 @@ app.use(express.json());
 let corsOptions = { 
   origin : '*', 
 } 
+const Cryptr = require('cryptr');
+const cryptr = new Cryptr('CRYPTR CODE HERE', { encoding: 'base64', pbkdf2Iterations: 10000, saltLength: 10 });
+let encryptedString = cryptr.encrypt('bacon');
+let decryptedString = cryptr.decrypt(encryptedString);
+console.log(encryptedString); 
+console.log(decryptedString); 
 
+
+
+function encryptPassword(password) {
+    return cryptr.encrypt(password);
+ // return bcrypt.hashSync(password, salt);
+}
+function decryptPassword(password) {
+    return cryptr.decrypt(password);
+   // return bcrypt.compareSync(password, hash);
+    }
 app.use(bodyParser.urlencoded({ extended: true })); 
 app.use(bodyParser.json()); 
 app.use(cors(corsOptions))
@@ -80,7 +96,7 @@ async function findKey(obj) {
     console.log("starting search")
     const allData = await pullAllUsers();
     console.log("pulled all users")
-  
+
     const user = allData.find(user => user.email === obj.email && user.password === obj.password);
     if (user === undefined) {
         return null;
@@ -102,7 +118,7 @@ app.post("/create-little-lantern", async(req, res) => {
   if (!(data.update === undefined)) {
     //updating mode
     delete data.update;
-    
+
   }
     data = {...data, isChecked: false};
     await children.put(data, userKey);
@@ -153,7 +169,7 @@ app.post("/check-out-child", async(req, res) => {
     }
  if (check.isChecked != true) {
     return res.status(400).json({ error: 'Child is not checked in', status: 'failed'});
-    
+
   }
 
     check.isChecked = false;
@@ -186,7 +202,7 @@ app.post('/store-db-data', async (req, res) => {
         const key = Object.keys(req.body)[0];
         const data = req.body[key];
 
-      
+
 
         await db.put(data, key);
         console.log("Data stored in the database", data, key);
@@ -431,6 +447,23 @@ app.post('/create-single-qr', async(req, res) => {
 
 
 })
+app.post("/delete-user", async(req, res) => {
+    const data = req.body;
+    if (data.email === undefined) {
+        return res.status(400).json({ error: 'Invalid data format' });
+    }
+    if (data.password === undefined) {
+        return res.status(400).json({ error: 'Invalid data format' });
+    }
+    const userKey = data.email;
+    //check if key already exists in database
+    let check = await users.get(userKey);
+    if (check === null) {
+        return res.status(400).json({ error: 'User does not exist', status: 'failed'});
+    }
+    await users.delete(userKey);
+    res.status(200).json({ message: 'User deleted successfully', userKey, status: 'success'});
+})
 app.post('/create-user', async (req, res) => {
     try {
         if (typeof req.body !== 'object') {
@@ -448,7 +481,9 @@ app.post('/create-user', async (req, res) => {
         if (check !== null) {
             return res.status(400).json({ error: 'User already exists', status: 'failed'});
         }
-        await users.put(data, userKey);
+
+data.password = encryptPassword(data.password);
+   await users.put(data, userKey);
         res.status(200).json({ message: 'User created successfully', userKey, status: 'success'});
 
     } catch (error) {
@@ -520,7 +555,7 @@ app.post('/login', async (req, res) => {
           return  res.status(400).json({ error: 'Invalid data format', status: 'failed'});
         }
         const userData = await users.get(data.email.toLowerCase());
-
+      userData.password = decryptPassword(userData.password);
 
         if (userData === undefined || userData === null) {
             return res.status(404).json({ error: 'User not found', status: 'failed'});
